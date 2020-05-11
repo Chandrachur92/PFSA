@@ -1,30 +1,1026 @@
 classdef PFSA
     %   Class File Containing the Essential PFSA Functions needed
     %   Code written by Chandrachur Bhattacharya @ Penn State
-    %   Date Last Modified: January, 2020
-    %   Functions In-built and their syntax
-    %   (For details please type: PFSA/function_name)
+    %   Date Last Modified: May, 2020
     %
-    %   FUNCTIONS IMPORTANT TO THE USER
+    %   Important functions in this class and their syntax given below:
+    %   (For details please type: help PFSA/function_name)
     %
-    %   [arr] = chooseNfromP(obj,N,P)
-    %   [bounds] = return_partitions_unit_var(obj,x,t,n)
-    %   [bounds] = return_partitions_unit_range(obj,x,t,n)
+    %   FUNCTIONS IMPORTANT TO THE USER FOR OFFLINE LEARNING WITH ONLINE /
+    %   OFFLINE IMPLIMENTATION
     %
-    %   [y] = normalize_unit_var(obj,x)
-    %   [y] = normalize_unit_range(obj,x)
-    %   [bounds] = return_partitions_unit_var(obj,x,t,n)
-    %   [bounds] = return_partitions_unit_range(obj,x,t,n)
-    %   [A] = State_Transition_Matrix(obj,y,n,D,states)
-    %   [A] = State_Transition_Matrix_D1(obj,y,n)
-    %   [y] = symbolize_partitions_unit_range(obj,x,bounds)
-    %   [y] = symbolize_partitions_unit_var(obj,x,bounds)
-    %   [y] = symbolize_unit_var(obj,x,t,n)
-    %   [y] = symbolize_unit_range(obj,x,t,n)
-    %   [states] = generate_states(obj,n,D)
-    %   [P] = State_Probability_Vector(obj,y,n,D,states)
+    %   [model] = Define_PFSA(N,D,part_scheme,global_part,unit_var,analysis_type)
+    %   [model] = Train_PFSA_Bulk(model,training_data,training_label)
+    %   [model] = Init_PFSA_Sequential(model,training_data_raw)
+    %   [model] = Train_PFSA_Sequential(model,training_data,training_label)
+    %   [pred_class] = Test_PFSA(model,testing_data)
+    %
+    %   There are 2 routes to training and testing PFSA models
+    %
+    %   ROUTE 1:
+    %   Define_PFSA -> Train_PFSA_Bulk -> Test_PFSA
+    %
+    %   (Preferred when training data windows are lower in number / data
+    %   pre-organized as [TS_data_window_1; ... ;TS_data_window_n] and
+    %   [label_1; ... ; label_n] format)
+    %
+    %   ROUTE 2:
+    %   Define_PFSA -> Init_PFSA_Sequential -> Train_PFSA_Sequential -> Test_PFSA
+    %
+    %   (Preferred when training data windows are large in number / data
+    %   pre-organized as [TS_data_1; ... ;TS_data_n] and
+    %   [label_series_1; ... ; label_series_n] format)
+    %
+    %   NOTE: Sequential training is sometimes a bit slower than bulk
+    %   training, due to the fact that values are recomputed at every step.
+    %   However, this allows for lesser data manipulation (like needed in
+    %   the 'Bulk' method). This leads to an overall faster training.
+    %
+    %   FOR A LISTING OF THE OTHER FUNCTIONS IN THIS CLASS PLEASE TYPE:
+    %   help PFSA/More_Info
     
-    methods
+    methods(Static)
+        function [model] = Define_PFSA(N,D,part_scheme,global_part,unit_var,analysis_type)
+            %   Code written by Chandrachur Bhattacharya @ Penn State
+            %   Date Last Modified: May 6, 2020
+            %
+            %   FORMAT: [model] = Define_PFSA(training_data,training_label,...
+            %       N,D,partitioning,global_part,unit_var,analysis_type)
+            %   PURPOSE: Creates the PFSA model to be used for the analysis
+            %            Outputs a PFSA model that is used during training 
+            %            and testing phases.
+            %            [Needs to be called as an object]
+            %
+            %   INPUTS: N =             Number of partitions of the PFSA
+            %           D =             Depth of the PFSA
+            %           global_part =   Set to 1 if a global partition is
+            %                           desired (recommended), 0 otherwise
+            %           unit_var =      Set to 1 if normalization is to be 
+            %                           done to generate zero mean and unit
+            %                           variance (recommended), 0 otherwise
+            %           analysis_type = Choose the PFSA analysis type:
+            %                           's' - Standard PFSA
+            %                           'p' - Projection PFSA (recommended)
+            %                           'b' - Best (tries to choose the
+            %                           most accurate of 's' and 'p')
+            %   OUTPUTS: model        = Base PFSA model
+            
+            model.N = N;
+            model.D = D;
+            model.part_scheme = part_scheme;
+            model.global_part = global_part;
+            model.unit_var = unit_var;
+            model.analysis_type = analysis_type;
+            model.classes = 0;
+        end
+     
+        function [model] = Train_PFSA_Bulk(model,training_data,training_label)
+            %   Code written by Chandrachur Bhattacharya @ Penn State
+            %   Date Last Modified: May 6, 2020
+            %
+            %   FORMAT: [model] = Train_PFSA_Bulk(model,training_data,training_label)
+            %   PURPOSE: Trains the PFSA model using the training time 
+            %            series data and the corresponding (numeric) class
+            %            label. 'Bulk' implies full training data and labels
+            %            must be provided to the function.
+            %            [Needs to be called as an object]
+            %            
+            %   INPUTS: model         = Base PFSA model with parameters.
+            %                           This must be generated using the
+            %                           function: Define_PFSA(...)
+            %           training_data = Training data time-series as a
+            %                           matrix of size (m x n), n is the
+            %                           number of samples per time series
+            %                           and m is the number of training 
+            %                           time series
+            %                           [NOTE: All the time series must 
+            %                           have the same length (n)]
+            %           training_label = Corresponding training labels for 
+            %                           the time series as a vector of size 
+            %                           (m x 1)
+            %   OUTPUTS: model        = Trained PFSA model
+            
+            N = model.N;
+            D = model.D;
+            part_scheme = model.part_scheme;
+            global_part = model.global_part;
+            unit_var = model.unit_var;
+            analysis_type = model.analysis_type;
+            
+            num_classes = length(unique(training_label));
+            states = generate_states(PFSA,N,D);
+            
+            for i = 1:num_classes
+                pi_train{i} = zeros(N^D,N^D);
+                mean_train(i) = 0;
+                std_train(i) = 0;
+                cnt(i) = 0;
+            end
+            
+            if global_part == 1
+                if unit_var == 1
+                    for i = 1:size(training_data,1)
+                        bounds(i,:) = return_partitions_unit_var(PFSA,training_data(i,:),part_scheme,N);
+                    end
+                else
+                    for i = 1:size(training_data,1)
+                        bounds(i,:) = return_partitions_unit_range(PFSA,training_data(i,:),part_scheme,N);
+                    end
+                end
+                bounds = sign(mean(bounds)).*max(abs(bounds));
+            end
+            
+            for i = 1:size(training_data,1)
+                if global_part == 1
+                    if unit_var == 1
+                        y = symbolize_partitions_unit_var(PFSA,training_data(i,:),bounds);
+                    else
+                        y = symbolize_partitions_unit_range(PFSA,training_data(i,:),bounds);
+                    end
+                else
+                    if unit_var == 1
+                        y = symbolize_unit_var(PFSA,training_data(i,:),part_scheme,N);
+                    else
+                        y = symbolize_unit_range(PFSA,training_data(i,:),part_scheme,N);
+                    end
+                end
+                
+                pi_temp = State_Transition_Matrix(PFSA,y,N,D,states);
+                pi_train{training_label(i)} = pi_train{training_label(i)} + pi_temp;
+                
+                mean_train(training_label(i)) = mean_train(training_label(i)) + mean(training_data(i,:));
+                std_train(training_label(i)) = std_train(training_label(i)) + std(training_data(i,:));
+                
+                cnt(training_label(i)) = cnt(training_label(i)) + 1;
+            end
+            
+            for i = 1:num_classes
+                pi_train{i} = pi_train{i}/cnt(i);
+                mean_train(i) = mean_train(i)/cnt(i);
+                std_train(i) = std_train(i)/cnt(i);
+                
+                if analysis_type == 'p' || analysis_type == 'b'
+                    [Right{i},Val{i},Left{i}] = eig(pi_train{i},'vector');
+                    [~,ind] = sort(real(Val{i}),'descend');
+                    Val{i} = Val{i}(ind);
+                    
+                    Right{i} = Right{i}(:,ind);
+                    mult = sign(Right{i}(1,1));
+                    Right{i} = Right{i}*mult;
+                    
+                    Left{i} = Left{i}(:,ind);
+                    Left{i} = Left{i}'*mult;
+                    
+                    factor = sqrt(abs(Val{i}));
+                    
+                    temp = factor'.*Right{i};
+                    
+                    for j = 1:1
+                        [Right_Ortho{i,j},~] = qr(temp(:,[[1:j-1],[j+1:end]]));
+                        Right_Ortho{i,j} = sign(real(Right_Ortho{i,j}(1,[1:end-1]))).*Right_Ortho{i,j}(:,[1:end-1]);
+                    end
+                end
+            end
+
+            model.pi_train = pi_train;
+            model.mean_train = mean_train;
+            model.std_train = std_train;
+            if analysis_type == 'p' || analysis_type == 'b'
+                model.Right_Ortho = Right_Ortho;
+            end
+            if global_part == 1
+                model.bounds = bounds;
+            end
+            
+            model.classes = num_classes;
+            model.map = [1:num_classes];
+        end
+        
+        function [model] = Init_PFSA_Sequential(model,training_data_raw)
+            %   Code written by Chandrachur Bhattacharya @ Penn State
+            %   Date Last Modified: May 6, 2020
+            %
+            %   FORMAT: [Init_PFSA_Sequential(model,training_data_raw)
+            %   PURPOSE: Initializes the PFSA model using the training raw
+            %            time series data. Here the time-series data need
+            %            not be organized and is inputed as a (p x q)
+            %            matrix, where p is the number of observed raw time
+            %            series (irrespective of regime / class) and q is
+            %            the data samples per time series
+            %            [Needs to be called as an object]
+            %            
+            %   INPUTS: model         = Base PFSA model with parameters.
+            %                           This must be generated using the
+            %                           function: Define_PFSA(...)
+            %           training_data_raw = Training data time-series as a
+            %                           matrix of size (p x q), p is the 
+            %                           number of observed raw time series 
+            %                           (irrespective of regime / class) 
+            %                           and q is the data samples per time
+            %                           series
+            %                           [NOTE: All the time series must 
+            %                           have the same length (q)]
+            %   OUTPUTS: model        = Initialized PFSA model for
+            %                           Sequential method
+            
+            N = model.N;
+            D = model.D;
+            part_scheme = model.part_scheme;
+            global_part = model.global_part;
+            unit_var = model.unit_var;
+            
+            states = generate_states(PFSA,N,D);
+            
+            if global_part == 1
+                if unit_var == 1
+                    for i = 1:size(training_data_raw,1)
+                        bounds(i,:) = return_partitions_unit_var(PFSA,training_data_raw(i,:),part_scheme,N);
+                    end
+                else
+                    for i = 1:size(training_data_raw,1)
+                        bounds(i,:) = return_partitions_unit_range(PFSA,training_data_raw(i,:),part_scheme,N);
+                    end
+                end
+                bounds = sign(mean(bounds)).*max(abs(bounds));
+            end
+            
+            if global_part == 1
+                model.bounds = bounds;
+            end
+            
+        end
+       
+        function [model] = Train_PFSA_Sequential(model,training_data,training_label)
+            %   Code written by Chandrachur Bhattacharya @ Penn State
+            %   Date Last Modified: May 6, 2020
+            %
+            %   FORMAT: [model] = Train_PFSA_Sequential(model,training_data,training_label)
+            %   PURPOSE: Trains the PFSA model using the training time 
+            %            series data and the corresponding (numeric) class
+            %            label. 'Sequential' implies the training data and 
+            %            labels is provided to the function sequqnetially 
+            %            (i.e. in an online windowed fashion).
+            %            [Needs to be called as an object]
+            %            
+            %   INPUTS: model         = Base PFSA model with parameters.
+            %                           This must be generated using the
+            %                           function: Define_PFSA(...) and
+            %                           initialized by: Init_PFSA_Sequential(...)
+            %           training_data = Training data time-series as a
+            %                           vector of size (1 x n), n is the
+            %                           number of samples in the time series
+            %                           [NOTE: Only a single time series is
+            %                           allowed]
+            %           training_label = Corresponding training label for 
+            %                           the time series as a scalar
+            %   OUTPUTS: model        = Trained PFSA model
+            
+            N = model.N;
+            D = model.D;
+            part_scheme = model.part_scheme;
+            global_part = model.global_part;
+            unit_var = model.unit_var;
+            analysis_type = model.analysis_type;
+            if global_part == 1
+                bounds = model.bounds;
+            end
+     
+            states = generate_states(PFSA,N,D);
+            
+            if model.classes == 0
+                num_classes = model.classes;
+                
+                num_classes = num_classes + 1;
+                pi_train{1} = zeros(N^D,N^D);
+                mean_train(1) = 0;
+                std_train(1) = 0;
+                cnt(1) = 0;
+                map(1) = training_label;
+            elseif ismember(training_label,model.map) == 0
+                num_classes = model.classes;
+                pi_train = model.pi_train;
+                mean_train = model.mean_train;
+                std_train = model.std_train;
+                cnt = model.cnt;
+                map = model.map;
+                if analysis_type == 'p' || analysis_type == 'b'
+                    Right_Ortho = model.Right_Ortho;
+                end
+                
+                num_classes = num_classes + 1;
+                pi_train{end+1} = zeros(N^D,N^D);
+                mean_train(end+1) = 0;
+                std_train(end+1) = 0;
+                cnt(end+1) = 0;
+                map(end+1) = training_label;
+                
+            else
+                num_classes = model.classes;
+                pi_train = model.pi_train;
+                mean_train = model.mean_train;
+                std_train = model.std_train;
+                cnt = model.cnt;
+                map = model.map;
+                if analysis_type == 'p' || analysis_type == 'b'
+                    Right_Ortho = model.Right_Ortho;
+                end
+            end
+ 
+            if global_part == 1
+                if unit_var == 1
+                    y = symbolize_partitions_unit_var(PFSA,training_data(1,:),bounds);
+                else
+                    y = symbolize_partitions_unit_range(PFSA,training_data(1,:),bounds);
+                end
+            else
+                if unit_var == 1
+                    y = symbolize_unit_var(PFSA,training_data(1,:),part_scheme,N);
+                else
+                    y = symbolize_unit_range(PFSA,training_data(1,:),part_scheme,N);
+                end
+            end
+                
+            pi_temp = State_Transition_Matrix(PFSA,y,N,D,states);
+            pi_train{training_label(1)} = (pi_train{training_label(1)}*cnt(training_label(1))...
+                + pi_temp)/(cnt(training_label(1)) + 1);
+            
+            mean_train(training_label(1)) = (mean_train(training_label(1))*cnt(training_label(1))...
+                + mean(training_data(1,:)))/(cnt(training_label(1)) + 1);
+            std_train(training_label(1)) = (std_train(training_label(1))*cnt(training_label(1))...
+                + std(training_data(1,:)))/(cnt(training_label(1)) + 1);
+            
+            cnt(training_label(1)) = cnt(training_label(1)) + 1;
+            
+            if analysis_type == 'p' || analysis_type == 'b'
+                [Right,Val,Left] = eig(pi_train{training_label(1)},'vector');
+                [~,ind] = sort(real(Val),'descend');
+                Val = Val(ind);
+
+                Right = Right(:,ind);
+                mult = sign(Right(1,1));
+                Right = Right*mult;
+
+                Left = Left(:,ind);
+                Left = Left'*mult;
+
+                factor = sqrt(abs(Val));
+
+                temp = factor'.*Right;
+
+                for j = 1:1
+                    [Right_Ortho{training_label(1),j},~] = qr(temp(:,[[1:j-1],[j+1:end]]));
+                    Right_Ortho{training_label(1),j} = sign(real(Right_Ortho{training_label(1),j}(1,[1:end-1])))...
+                        .*Right_Ortho{training_label(1),j}(:,[1:end-1]);
+                end
+                
+            end
+
+            model.pi_train = pi_train;
+            model.mean_train = mean_train;
+            model.std_train = std_train;
+            model.cnt = cnt;
+            if analysis_type == 'p' || analysis_type == 'b'
+                model.Right_Ortho = Right_Ortho;
+            end
+            if global_part == 1
+                model.bounds = bounds;
+            end
+            
+            model.classes = num_classes;
+            model.map = map;
+        end
+                
+        function [pred_class] = Test_PFSA(model,testing_data)
+            %   Code written by Chandrachur Bhattacharya @ Penn State
+            %   Date Last Modified: May 6, 2020
+            %
+            %   FORMAT: [pred_class] = Test_PFSA(model,testing_data)
+            %   PURPOSE: Classifies the test time series data using the
+            %            trained PFSA model. The output is the (numeric) 
+            %            class label.
+            %            [Needs to be called as an object]
+            %            
+            %   INPUTS: model         = Trained PFSA model with parameters.
+            %                           This must be generated using the
+            %                           function: Train_PFSA(...)
+            %                           (which needs: Define_PFSA(...))
+            %           testing_data  = Testing data time-series as a
+            %                           matrix of size (m x n), n is the
+            %                           number of samples per time series
+            %                           and m is the number of training 
+            %                           time series. 
+            %                           [NOTE 1: All the time series must 
+            %                           have the same length (n)]
+            %                           [NOTE 2: To analyse a single window 
+            %                           (e.g. online) the matrix is
+            %                           a vector of size (1 x n)]
+            %   OUTPUTS: pred_class =   Corresponding predicted classification
+            %                           labels for the test time series
+            %                           as a vector of size (m x 1).
+            %                           [NOTE: When analysing a single window 
+            %                           (e.g. online) output is a scalar]
+            
+            N = model.N;
+            D = model.D;
+            part_scheme = model.part_scheme;
+            global_part = model.global_part;
+            unit_var = model.unit_var;
+            analysis_type = model.analysis_type;
+            
+            pi_train = model.pi_train;
+            mean_train = model.mean_train;
+            std_train = model.std_train;
+            if analysis_type == 'p' || analysis_type == 'b'
+                Right_Ortho = model.Right_Ortho;
+            end
+            if global_part == 1
+                bounds = model.bounds;
+            end
+            num_classes = model.classes;
+            
+            states = generate_states(PFSA,N,D);
+            
+            for i = 1:size(testing_data,1)
+                if global_part == 1
+                    if unit_var == 1
+                        y = symbolize_partitions_unit_var(PFSA,testing_data(i,:),bounds);
+                    else
+                        y = symbolize_partitions_unit_range(PFSA,testing_data(i,:),bounds);
+                    end
+                else
+                    if unit_var == 1
+                        y = symbolize_unit_var(PFSA,testing_data(i,:),part_scheme,N);
+                    else
+                        y = symbolize_unit_range(PFSA,testing_data(i,:),part_scheme,N);
+                    end
+                end
+                
+                pi_temp = State_Transition_Matrix(PFSA,y,N,D,states);
+                std_temp = std(testing_data(i,:));
+                mean_temp = mean(testing_data(i,:));
+                
+                dist_pi = [];
+                if analysis_type == 's' || analysis_type == 'b'
+                    for j = 1:num_classes
+                        dist_pi(j) = norm([norm(pi_train{j} - pi_temp,2),...
+                            std_temp-std_train(j),mean_temp - mean_train(j)],2);
+                    end
+                end
+                
+                error = [];
+                if analysis_type == 'p' || analysis_type == 'b'
+                    [Right_temp,Val_temp,Left_temp] = eig(pi_temp,'vector');
+                    [~,ind] = sort(real(Val_temp),'descend');
+                    Val_temp = Val_temp(ind);
+                    Right_temp = Right_temp(:,ind);
+                    mult = sign(real(Right_temp(1,1)));
+                    Left_temp = (Left_temp(:,ind)*mult)';
+                    
+                    for j = 1:num_classes
+                        error(j) = norm([vecnorm((Left_temp(1,:)*Right_Ortho{j,1}),2,2),...
+                            std_temp-std_train(j),mean_temp - mean_train(j)],2);
+                    end
+                end
+                
+                switch analysis_type
+                    case 's'
+                        pred_class(i,1) = map(find(dist_pi == min(dist_pi)));
+                    case 'p'
+                        pred_class(i,1) = map(find(error == min(error)));
+                    case 'b'
+                        conf_pi = sort((1./dist_pi)./sum(1./dist_pi),'descend');
+                        conf_proj = sort((1./error)./sum(1./error),'descend');
+
+                        if conf_pi(1) >= conf_proj(1)
+                            pred_class(i,1) = map(find(dist_pi == min(dist_pi)));
+                        else
+                            pred_class(i,1) = map(find(error == min(error)));
+                        end
+                end
+            end
+        end
+        
+        function [model] = Define_PFSA_Discovery(N,D,part_scheme,global_part,unit_var,analysis_type,M1,M2)
+            %   Code written by Chandrachur Bhattacharya @ Penn State
+            %   Date Last Modified: May 6, 2020
+            %
+            %   FORMAT: [model] = Define_PFSA(training_data,training_label,...
+            %       N,D,partitioning,global_part,unit_var,analysis_type)
+            %   PURPOSE: Creates the PFSA model to be used for the analysis
+            %            Outputs a PFSA model that is used during training 
+            %            and testing phases.
+            %            [Needs to be called as an object]
+            %
+            %   INPUTS: N =             Number of partitions of the PFSA
+            %           D =             Depth of the PFSA
+            %           global_part =   Set to 1 if a global partition is
+            %                           desired (recommended), 0 otherwise
+            %           unit_var =      Set to 1 if normalization is to be 
+            %                           done to generate zero mean and unit
+            %                           variance (recommended), 0 otherwise
+            %   OUTPUTS: model        = Base PFSA model
+            
+            model.N = N;
+            model.D = D;
+            model.part_scheme = part_scheme;
+            model.global_part = global_part;
+            model.unit_var = unit_var;
+            model.analysis_type = analysis_type;
+            model.classes = 0;
+            model.M1 = M1;
+            model.M2 = M2;
+        end
+        
+        function [model] = Train_Base_PFSA_Bulk_Discovery(model,training_data,training_label,beta,gamma)
+            %   Code written by Chandrachur Bhattacharya @ Penn State
+            %   Date Last Modified: May 6, 2020
+            %
+            %   FORMAT: [model] = Train_PFSA_Bulk(model,training_data,training_label)
+            %   PURPOSE: Trains the PFSA model using the training time 
+            %            series data and the corresponding (numeric) class
+            %            label. 'Bulk' implies full training data and labels
+            %            must be provided to the function.
+            %            [Needs to be called as an object]
+            %            
+            %   INPUTS: model         = Base PFSA model with parameters.
+            %                           This must be generated using the
+            %                           function: Define_PFSA(...)
+            %           training_data = Training data time-series as a
+            %                           matrix of size (m x n), n is the
+            %                           number of samples per time series
+            %                           and m is the number of training 
+            %                           time series
+            %                           [NOTE: All the time series must 
+            %                           have the same length (n)]
+            %           training_label = Corresponding training labels for 
+            %                           the time series as a vector of size 
+            %                           (m x 1)
+            %   OUTPUTS: model        = Trained PFSA model
+            
+            N = model.N;
+            D = model.D;
+            part_scheme = model.part_scheme;
+            global_part = model.global_part;
+            unit_var = model.unit_var;
+            analysis_type = model.analysis_type;
+            M1 = model.M1;
+            M2 = model.M2;
+            states = generate_states(PFSA,N,D);
+            
+            num_classes = length(unique(training_label));
+            
+            for i = 1:num_classes
+                mean_pi_train{i} = zeros(N^D,N^D);
+                mean_train(i) = 0;
+                std_train(i) = 0;
+                cnt(i) = 0;
+                if analysis_type == 's'
+                    rho_mean = 0;
+                    rho_std = 0;
+                else
+                    err_mean = 0;
+                    err_std = 0;
+                end
+            end
+            
+            if global_part == 1
+                if unit_var == 1
+                    for i = 1:size(training_data,1)
+                        bounds(i,:) = return_partitions_unit_var(PFSA,training_data(i,:),part_scheme,N);
+                    end
+                else
+                    for i = 1:size(training_data,1)
+                        bounds(i,:) = return_partitions_unit_range(PFSA,training_data(i,:),part_scheme,N);
+                    end
+                end
+                bounds = sign(mean(bounds)).*max(abs(bounds));
+            end
+            
+            for i = 1:size(training_data,1)
+                if global_part == 1
+                    if unit_var == 1
+                        y = symbolize_partitions_unit_var(PFSA,training_data(i,:),bounds);
+                    else
+                        y = symbolize_partitions_unit_range(PFSA,training_data(i,:),bounds);
+                    end
+                else
+                    if unit_var == 1
+                        y = symbolize_unit_var(PFSA,training_data(i,:),part_scheme,N);
+                    else
+                        y = symbolize_unit_range(PFSA,training_data(i,:),part_scheme,N);
+                    end
+                end
+                cnt(training_label(i)) = cnt(training_label(i)) + 1;
+                
+                pi_temp = State_Transition_Matrix(PFSA,y,N,D,states);
+                mean_pi_train{training_label(i)} = mean_pi_train{training_label(i)} + pi_temp;
+                
+                pi_train{training_label(i),cnt(training_label(i))} = pi_temp;
+                x_data{training_label(i),cnt(training_label(i))} = training_data(i,:);
+                
+                mean_train(training_label(i)) = mean_train(training_label(i)) + mean(training_data(i,:));
+                std_train(training_label(i)) = std_train(training_label(i)) + std(training_data(i,:));
+
+            end
+ 
+            for i = 1:num_classes
+                mean_pi_train{i} = mean_pi_train{i}/cnt(i);
+                mean_train(i) = mean_train(i)/cnt(i);
+                std_train(i) = std_train(i)/cnt(i);
+                
+                if analysis_type == 'p'
+                    [Right{i},Val{i},Left{i}] = eig(mean_pi_train{i},'vector');
+                    [~,ind] = sort(real(Val{i}),'descend');
+                    Val{i} = Val{i}(ind);
+                    
+                    Right{i} = Right{i}(:,ind);
+                    mult = sign(Right{i}(1,1));
+                    Right{i} = Right{i}*mult;
+                    
+                    Left{i} = Left{i}(:,ind);
+                    Left{i} = Left{i}'*mult;
+                    
+                    factor = sqrt(abs(Val{i}));
+                    
+                    temp = factor'.*Right{i};
+                    
+                    [Right_Ortho{i,1},~] = qr(temp(:,[2:end]));
+                    Right_Ortho{i,1} = sign(real(Right_Ortho{i,1}(1,[1:end-1]))).*Right_Ortho{i,1}(:,[1:end-1]);
+                end
+            end
+
+            model.mean_pi_train = mean_pi_train;
+            model.mean_train = mean_train;
+            model.std_train = std_train;
+            if analysis_type == 'p'
+                model.Right_Ortho = Right_Ortho;
+            end
+            if global_part == 1
+                model.bounds = bounds;
+            end
+            
+            for i = 1:num_classes
+                cnt(i) = 0;
+            end
+            
+            for i = 1:size(pi_train,1)
+                for j = 1:size(pi_train,2)
+                    pi_temp = pi_train{i,j};
+                    
+                    std_temp = std(x_data{i,j});
+                    mean_temp = mean(x_data{i,j});
+
+                    if analysis_type == 's'
+                        cnt(i) = cnt(i)+1;
+                        dist_pi{i,j} = norm([norm(mean_pi_train{i} - pi_temp,2),...
+                            std_temp-std_train(i),mean_temp - mean_train(i)],2);
+                    end
+                    
+                    if analysis_type == 'p'
+                        [Right_temp,Val_temp,Left_temp] = eig(pi_temp,'vector');
+                        [~,ind] = sort(real(Val_temp),'descend');
+                        Val_temp = Val_temp(ind);
+                        Right_temp = Right_temp(:,ind);
+                        mult = sign(real(Right_temp(1,1)));
+                        Left_temp = (Left_temp(:,ind)*mult)';
+                        cnt(i) = cnt(i)+1;
+                        error{i,j} = norm([vecnorm((Left_temp(1,:)*Right_Ortho{i,1}),2,2),...
+                            std_temp-std_train(i),mean_temp - mean_train(i)],2);
+                    end
+                end
+            end
+            
+            if analysis_type == 's'
+                model.dist_pi = dist_pi;
+                model.dist_pi1 = [];
+                model.cnt = cnt;
+                for j = 1:num_classes
+                    temp = [];
+                    for c = 1:cnt(j)
+                        temp(c) = dist_pi{j,c};
+                    end
+                    rho(j) = mean(temp) + gamma*std(temp);
+                    if cnt(j) > M1+M2
+                        is_trained(j) = 1;
+                    else
+                        is_trained(j) = 1;
+                    end
+                    alpha(j) = max(1.5,(mean(temp) + beta*std(temp))/(mean(temp) - beta*std(temp)));
+                end
+                model.rho = rho;
+                model.alpha1 = mean(alpha);
+                model.alpha = mean(alpha);
+                model.gamma = gamma;
+                model.beta = beta;
+                model.x_data = x_data;
+                model.pi_train = pi_train;
+            end
+            if analysis_type == 'p'
+                model.error = error;
+                model.cnt = cnt;
+                for j = 1:num_classes
+                    temp = [];
+                    for c = 1:cnt(j)
+                        temp(c) = error{j,c};
+                    end
+                    err_mean(j) = mean(temp);
+                    err_std(j) = std(temp);
+                    if cnt(j) > M1+M2
+                        is_trained(j) = 1;
+                    else
+                        is_trained(j) = 1;
+                    end
+                end
+                model.err_mean = err_mean;
+                model.err_std = err_std;
+                
+                model.x_data = x_data;
+                model.pi_train = pi_train;
+            end           
+                            
+            model.classes = num_classes;
+            model.is_trained = is_trained;
+        end
+        
+        function [model,pred_class] = Discover_PFSA_Sequential_Discovery(model,testing_data)
+            %   Code written by Chandrachur Bhattacharya @ Penn State
+            %   Date Last Modified: May 6, 2020
+            %
+            %   FORMAT: [model] = Train_PFSA_Sequential(model,training_data,training_label)
+            %   PURPOSE: Trains the PFSA model using the training time 
+            %            series data and the corresponding (numeric) class
+            %            label. 'Sequential' implies the training data and 
+            %            labels is provided to the function sequqnetially 
+            %            (i.e. in an online windowed fashion).
+            %            [Needs to be called as an object]
+            %            
+            %   INPUTS: model         = Base PFSA model with parameters.
+            %                           This must be generated using the
+            %                           function: Define_PFSA(...) and
+            %                           initialized by: Init_PFSA_Sequential(...)
+            %           training_data = Training data time-series as a
+            %                           vector of size (1 x n), n is the
+            %                           number of samples in the time series
+            %                           [NOTE: Only a single time series is
+            %                           allowed]
+            %   OUTPUTS: model        = Trained PFSA model
+            
+            N = model.N;
+            D = model.D;
+            part_scheme = model.part_scheme;
+            global_part = model.global_part;
+            unit_var = model.unit_var;
+            analysis_type = model.analysis_type;
+            x_data = model.x_data;
+            pi_train = model.pi_train;
+            mean_pi_train = model.mean_pi_train;
+            mean_train = model.mean_train;
+            std_train = model.std_train;
+            if analysis_type == 's'
+                rho = model.rho;
+                dist_pi = model.dist_pi;
+                dist_pi1 = model.dist_pi1;
+            end
+            if analysis_type == 'p'
+                Right_Ortho = model.Right_Ortho;
+                err_mean = model.err_mean;
+                err_std = model.err_std;
+            end
+            if global_part == 1
+                bounds = model.bounds;
+            end
+            cnt = model.cnt;
+            num_classes = model.classes;
+            is_trained = model.is_trained;
+            alpha = model.alpha;
+            alpha1 = model.alpha1;
+            beta = model.beta;
+            gamma = model.gamma;
+            M1 = model.M1;
+            M2 = model.M2;
+
+            states = generate_states(PFSA,N,D);
+            
+            if global_part == 1
+                if unit_var == 1
+                    y = symbolize_partitions_unit_var(PFSA,testing_data(1,:),bounds);
+                else
+                    y = symbolize_partitions_unit_range(PFSA,testing_data(1,:),bounds);
+                end
+            else
+                if unit_var == 1
+                    y = symbolize_unit_var(PFSA,testing_data(1,:),part_scheme,N);
+                else
+                    y = symbolize_unit_range(PFSA,testing_data(1,:),part_scheme,N);
+                end
+            end
+
+            pi_temp = State_Transition_Matrix(PFSA,y,N,D,states);
+            std_temp = std(testing_data(1,:));
+            mean_temp = mean(testing_data(1,:));
+
+            if analysis_type == 's'
+                for j = 1:num_classes
+                    dist_pi_temp(j) = norm([norm(mean_pi_train{j} - pi_temp,2),...
+                        std_temp-std_train(j),mean_temp - mean_train(j)],2);
+                end
+                min_dist = min(dist_pi_temp);
+                pred_class_temp = find(dist_pi_temp == min_dist);
+                
+                if is_trained(pred_class_temp) == 0
+                    for j = 1:num_classes
+                        dist_pi_temp(j) = norm(mean_pi_train{j} - pi_temp,2);
+                    end
+                    min_dist = min(dist_pi_temp);
+                    pred_class_temp = find(dist_pi_temp == min_dist);
+                end
+
+                if min_dist <= rho(pred_class_temp)
+                    if is_trained(pred_class_temp) == 1
+                        pred_class = pred_class_temp;
+                    else
+                        pred_class = pred_class_temp;
+                        mean_pi_train{pred_class} = (mean_pi_train{pred_class}*cnt(pred_class) + pi_temp)...
+                            /(cnt(pred_class) + 1);
+                        
+                        cnt(pred_class) = cnt(pred_class) + 1;
+                        x_data{pred_class,(cnt(pred_class))} = testing_data(1,:);
+                        pi_train{pred_class,cnt(pred_class)} = pi_temp;
+                        x_std(cnt(pred_class)) = std_temp;
+                        x_mean(cnt(pred_class)) = mean_temp;
+
+                        for i = 1:cnt(pred_class)
+                            x_temp = x_data{pred_class,i};
+                            x_mean(i) = mean(x_temp);
+                            x_std(i) = std(x_temp);
+                        end
+                        mean_train_temp = mean(x_mean);
+                        std_train_temp = mean(x_std);
+                        
+                        for i = 1:cnt(pred_class)
+                            dist_pi1{pred_class,i} = norm(mean_pi_train{pred_class} - pi_train{pred_class,i},2);
+                            dist_pi{pred_class,i} = norm([norm(mean_pi_train{pred_class} - pi_train{pred_class,i},2),...
+                                x_std(i)-std_train_temp,x_mean(i) - mean_train_temp],2);
+                        end
+                        
+                        if cnt(pred_class) <= M1
+                            rho(pred_class) = (rho(pred_class)*(cnt(pred_class)-1) +...
+                                alpha*dist_pi1{pred_class,cnt(pred_class)})/cnt(pred_class);
+                            mean_train(pred_class) = (mean_train(pred_class)*(cnt(pred_class)-1) +...
+                                mean_train_temp)/cnt(pred_class);
+                            std_train(pred_class) = (std_train(pred_class)*(cnt(pred_class)-1) +...
+                                std_train_temp)/cnt(pred_class);
+                        elseif cnt(pred_class) > M1 && cnt(pred_class) <= M1+M2
+                            is_trained(pred_class) = 0.5;
+                            
+                            temp = [];
+                            for i = 1:cnt(pred_class)
+                                temp(i) = dist_pi{pred_class,i};
+                            end
+                            rho(pred_class) = mean(temp) + gamma*std(temp);
+                            mean_train(pred_class) = mean_train_temp;
+                            std_train(pred_class) = std_train_temp;
+                        end
+                        
+                        if cnt(pred_class) == M1+M2
+                            is_trained(pred_class) = 1;
+                            trained = find(is_trained == 1);
+                            
+                            for jj = 1:length(trained)
+                                j = trained(jj);
+                                
+                                alpha_temp(jj) =  (mean(temp) + beta*std(temp))/(mean(temp) - beta*std(temp));
+                            end
+                            alpha = max(1.5,min(alpha1,mean(alpha_temp)));
+                            
+                            %$$%
+                            
+                            un_trained = find(is_trained ~= 1);
+                            delete = [];
+                            
+                            for jj = length(un_trained):-1:1
+                                j = un_trained(jj);
+
+                                if norm(mean_pi_train{pred_class} - mean_pi_train{j},2) < rho(pred_class)
+                                    
+                                    x_data(pred_class,[1:cnt(pred_class)+cnt(j)]) = [x_data(pred_class,[1:cnt(pred_class)]),...
+                                        x_data(j,[1:cnt(j)])];
+                                    dist_pi(pred_class,[1:cnt(pred_class)+cnt(j)]) = [dist_pi(pred_class,[1:cnt(pred_class)]),...
+                                        dist_pi(j,[1:cnt(j)])];
+                                    pi_train(pred_class,[1:cnt(pred_class)+cnt(j)]) = [pi_train(pred_class,[1:cnt(pred_class)]),...
+                                        pi_train(j,[1:cnt(j)])];
+                                    
+                                    mean_pi_train{pred_class} = (mean_pi_train{pred_class}*cnt(pred_class) + ...
+                                        mean_pi_train{j}*cnt(j))/(cnt(pred_class) + cnt(j));
+                                    mean_train(pred_class) = (mean_train(pred_class)*cnt(pred_class) + ...
+                                        mean_train(j)*cnt(j))/(cnt(pred_class) + cnt(j));
+                                    std_train(pred_class) = (std_train(pred_class)*cnt(pred_class) + ...
+                                        std_train(j)*cnt(j))/(cnt(pred_class) + cnt(j));
+                                    rho(pred_class) = (rho(pred_class)*cnt(pred_class) + ...
+                                        rho(j)*cnt(j))/(cnt(pred_class) + cnt(j));
+                                    cnt(pred_class) = cnt(pred_class) + cnt(j);
+                                    
+                                    delete = [delete, j];
+                                end
+                            end
+                            
+                            for jj = 1:length(delete)
+                                j = delete(jj);
+                                
+                                num_classes = num_classes - 1;
+                                
+                                x_data(j,:) = [];
+                                dist_pi(j,:) = [];
+                                dist_pi1(j,:) = [];
+                                pi_train(j,:) = [];
+                                mean_pi_train(j) = [];
+                                mean_train(j) = [];
+                                std_train(j) = [];
+                                rho(j) = [];
+                                cnt(j) = [];
+                                is_trained(j) = [];
+                            end
+    
+                        end
+                        
+                    end
+                else
+                    num_classes = num_classes + 1;
+                    pred_class = num_classes;
+                    cnt(pred_class) = 1;
+                    mean_pi_train{pred_class} = pi_temp;
+                    pi_train{pred_class,1} = pi_temp;
+                    x_data{pred_class,1} = testing_data(1,:);
+                    dist_pi{pred_class,1} = min_dist;
+                    dist_pi1{pred_class,1} = min_dist;
+                    is_trained(pred_class) = 0;
+                    
+                    mean_train(pred_class) = mean(testing_data(1,:));
+                    std_train(pred_class) = std(testing_data(1,:));
+                    rho(pred_class) = alpha*mean(rho(is_trained==1));
+                end
+                    
+                model.mean_pi_train = mean_pi_train;
+                model.mean_train = mean_train;
+                model.std_train = std_train;
+                model.dist_pi = dist_pi;  
+                model.dist_pi1 = dist_pi1;   
+                model.cnt = cnt;
+                model.rho = rho;
+                model.alpha = alpha;
+                model.x_data = x_data;
+                model.pi_train = pi_train;
+                model.is_trained = is_trained;
+                model.classes = num_classes;
+                model.pi_train = pi_train;
+                
+            end
+
+%             error = [];
+%             if analysis_type == 'p' || analysis_type == 'b'
+%                 [Right_temp,Val_temp,Left_temp] = eig(pi_temp,'vector');
+%                 [~,ind] = sort(real(Val_temp),'descend');
+%                 Val_temp = Val_temp(ind);
+%                 Right_temp = Right_temp(:,ind);
+%                 mult = sign(real(Right_temp(1,1)));
+%                 Left_temp = (Left_temp(:,ind)*mult)';
+% 
+%                 for j = 1:num_classes
+%                     error(j) = norm([vecnorm((Left_temp(1,:)*Right_Ortho{j,1}),2,2),...
+%                         std_temp-std_train(j),mean_temp - mean_train(j)],2);
+%                 end
+%             end
+
+
+
+
+        end
+        
+    end
+ 
+     methods
+        function [] = More_Info()
+            %   OTHER PROGRAM FUNCTIONS
+            %   For further information on these functions please type:
+            %   "help PFSA/function_name"
+            %
+            %   [arr] = chooseNfromP(obj,N,P)
+            %   [bounds] = return_partitions_unit_var(obj,x,t,n)
+            %   [bounds] = return_partitions_unit_range(obj,x,t,n)
+            %   [y] = normalize_unit_var(obj,x)
+            %   [y] = normalize_unit_range(obj,x)
+            %   [bounds] = return_partitions_unit_var(obj,x,t,n)
+            %   [bounds] = return_partitions_unit_range(obj,x,t,n)
+            %   [A] = State_Transition_Matrix(obj,y,n,D,states)
+            %   [A] = State_Transition_Matrix_D1(obj,y,n)
+            %   [y] = symbolize_partitions_unit_range(obj,x,bounds)
+            %   [y] = symbolize_partitions_unit_var(obj,x,bounds)
+            %   [y] = symbolize_unit_var(obj,x,t,n)
+            %   [y] = symbolize_unit_range(obj,x,t,n)
+            %   [states] = generate_states(obj,n,D)
+            %   [P] = State_Probability_Vector(obj,y,n,D,states)
+        end 
+         
         function [arr] = chooseNfromP(obj,N,P)
             %   Code written by Chandrachur Bhattacharya @ Penn State
             %   Date Last Modified: November 25, 2019
@@ -32,7 +1028,7 @@ classdef PFSA
             %   PURPOSE: This function chooses N numbers from P numbers randomly
             %   INPUTS: N = No. of Numbers to be chosen,
             %           P = Total Numbers
-            %   OUPUTS: arr = Array of N selected numbers
+            %   OUTPUTS: arr = Array of N selected numbers
             %   MATLAB functions called: ceil isempty intersect
             %   Non-MATLAB functions called: None
             
@@ -55,7 +1051,7 @@ classdef PFSA
             %   PURPOSE: This function returns the normalized time-series to have zero
             %            mean and unit variance
             %   INPUTS: x = Raw time-series
-            %   OUPUTS: y =  Normalized time-series
+            %   OUTPUTS: y =  Normalized time-series
             %   MATLAB functions called: mean std
             %   Non-MATLAB functions called: None
             y = (x-mean(x))/std(x);
@@ -68,10 +1064,10 @@ classdef PFSA
             %   PURPOSE: This function returns the normalized time-series
             %            to have unit range
             %   INPUTS: x = Raw time-series
-            %   OUPUTS: y =  Normalized time-series
+            %   OUTPUTS: y =  Normalized time-series
             %   MATLAB functions called: max min
             %   Non-MATLAB functions called: None
-            range = max(x) - min(x);
+            range = max(x) - min(x) + 1e-9;
             y = (x-min(x))/range;
         end
         
@@ -86,7 +1082,7 @@ classdef PFSA
             %           t = Type of partitioning schemes (MEP: 'm', Uniform: 'u',
             %               K-means: 'k'),
             %           n = Alphabet size
-            %   OUPUTS: bounds = normalized partition boundary values
+            %   OUTPUTS: bounds = normalized partition boundary values
             %   MATLAB functions called: min max sort size kmeans find
             %   Non-MATLAB functions called: normalizeTS
             
@@ -127,7 +1123,7 @@ classdef PFSA
             %           t = Type of partitioning schemes (MEP: 'm', Uniform: 'u',
             %               K-means: 'k'),
             %           n = Alphabet size
-            %   OUPUTS: bounds = normalized partition boundary values
+            %   OUTPUTS: bounds = normalized partition boundary values
             %   MATLAB functions called: min max sort size kmeans find
             %   Non-MATLAB functions called: normalizeTS
             
@@ -169,7 +1165,7 @@ classdef PFSA
             %           D = Markov depth,
             %           states = List of states (can be generated by function
             %           'generate_states')
-            %   OUPUTS: A = State transition matrix
+            %   OUTPUTS: A = State transition matrix
             %   MATLAB functions called: length find size
             %   Non-MATLAB functions called: State_Transition_Matrix_D1
             %   LIMITATIONS: If D>1, n is restricted to 9
@@ -207,7 +1203,7 @@ classdef PFSA
             %            depth (D) is 1
             %   INPUTS: y = Symbol sequence,
             %           n = Alphabet size,
-            %   OUPUTS: A = State transition matrix
+            %   OUTPUTS: A = State transition matrix
             %   MATLAB functions called: None
             %   Non-MATLAB functions called: None
             
@@ -235,7 +1231,7 @@ classdef PFSA
             %            preset partition boundaries
             %   INPUTS: x = Raw time-series,
             %           bounds = Preset partition boundaries
-            %   OUPUTS: y = Computed symbol sequence (of same length as 'x')
+            %   OUTPUTS: y = Computed symbol sequence (of same length as 'x')
             %   MATLAB functions called: length
             %   Non-MATLAB functions called: normalizeTS
             
@@ -259,7 +1255,7 @@ classdef PFSA
             %            preset partition boundaries
             %   INPUTS: x = Raw time-series,
             %           bounds = Preset partition boundaries
-            %   OUPUTS: y = Computed symbol sequence (of same length as 'x')
+            %   OUTPUTS: y = Computed symbol sequence (of same length as 'x')
             %   MATLAB functions called: length
             %   Non-MATLAB functions called: normalizeTS
             
@@ -284,7 +1280,7 @@ classdef PFSA
             %           t = Type of partitioning schemes (MEP: 'm', Uniform: 'u',
             %               K-means: 'k'),
             %           n = Alphabet size
-            %   OUPUTS: y = Computed symbol sequence (of same length as 'x')
+            %   OUTPUTS: y = Computed symbol sequence (of same length as 'x')
             %   MATLAB functions called: length
             %   Non-MATLAB functions called: normalize
             
@@ -326,7 +1322,7 @@ classdef PFSA
             %           t = Type of partitioning schemes (MEP: 'm', Uniform: 'u',
             %               K-means: 'k'),
             %           n = Alphabet size
-            %   OUPUTS: y = Computed symbol sequence (of same length as 'x')
+            %   OUTPUTS: y = Computed symbol sequence (of same length as 'x')
             %   MATLAB functions called: length
             %   Non-MATLAB functions called: normalize
             
@@ -366,18 +1362,22 @@ classdef PFSA
             %            setting
             %   INPUTS: n = Alphabet size,
             %           D = Markov depth
-            %   OUPUTS: states = PFSA states (unmerged)
+            %   OUTPUTS: states = PFSA states (unmerged)
             %   MATLAB functions called: str2double dec2base
             %   Non-MATLAB functions called: None
             %   LIMITATIONS: If D>1, n is restricted to 9
             
             add = 0;
             pre = 0;
-            for i = 1:D
-                add = add + 10^(i-1);
-            end
-            for i = 0:n^D-1
-                states(i+1,1) = str2double(dec2base(i,n)) + add;
+            if D == 1
+                states = [1:n];
+            else
+                for i = 1:D
+                    add = add + 10^(i-1);
+                end
+                for i = 0:n^D-1
+                    states(i+1,1) = str2double(dec2base(i,n)) + add;
+                end
             end
         end
         
@@ -392,7 +1392,7 @@ classdef PFSA
             %           D = Markov depth,
             %           states = List of states (can be generated by function
             %           'generate_states')
-            %   OUPUTS: P = State probability vector
+            %   OUTPUTS: P = State probability vector
             %   MATLAB functions called: find
             %   Non-MATLAB functions called: None
             
