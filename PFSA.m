@@ -1,14 +1,17 @@
 classdef PFSA
     %   Class File Containing the Essential PFSA Functions needed
     %   Code written by Chandrachur Bhattacharya @ Penn State
-    %   E-mail: chandrachur.bhattacharya@gmail.com
     %   Date Last Modified: May, 2020
+    %
+    %   Please cite:
+    %   Chandrachur Bhattacharya and Dr Asok Ray. "Online Discovery and 
+    %   Classification of Operational Regimes from an Ensemble of Time 
+    %   Series Data." Journal of Dynamic Systems, Measurement, and Control (2020).
     %
     %   Important functions in this class and their syntax given below:
     %   (For details please type: help PFSA/function_name)
     %
-    %   FUNCTIONS IMPORTANT TO THE USER FOR OFFLINE LEARNING WITH ONLINE /
-    %   OFFLINE IMPLEMENTATION
+    %   FUNCTIONS IMPORTANT TO THE USER
     %
     %   [model] = Define_PFSA(N,D,part_scheme,global_part,unit_var,analysis_type)
     %   [model] = Train_PFSA_Bulk(model,training_data,training_label)
@@ -128,7 +131,7 @@ classdef PFSA
                         bounds(i,:) = return_partitions_unit_range(PFSA,training_data(i,:),part_scheme,N);
                     end
                 end
-                bounds = sign(mean(bounds)).*max(abs(bounds));
+                bounds = sign(mean(bounds)).*mean(abs(bounds));
             end
             
             for i = 1:size(training_data,1)
@@ -437,6 +440,7 @@ classdef PFSA
             if global_part == 1
                 bounds = model.bounds;
             end
+            map = model.map;
             num_classes = model.classes;
             
             states = generate_states(PFSA,N,D);
