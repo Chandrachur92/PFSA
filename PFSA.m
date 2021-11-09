@@ -1,12 +1,12 @@
 classdef PFSA
     %   Class File Containing the Essential PFSA Functions needed
     %   Code written by Chandrachur Bhattacharya @ Penn State
-    %   Date Last Modified: May, 2020
-    %
+    %   Date Last Modified: August, 2021
+    %   
     %   Please cite:
-    %   Chandrachur Bhattacharya and Dr Asok Ray. "Online Discovery and 
-    %   Classification of Operational Regimes from an Ensemble of Time 
-    %   Series Data." Journal of Dynamic Systems, Measurement, and Control (2020).
+    %   Chandrachur Bhattacharya and Dr Asok Ray. Thresholdless Classification
+    %   of Chaotic Dynamics and Combustion Instability via Probabilistic Finite
+    %   State Automata." Mechanical Systems and Signal Processing (2021).
     %
     %   Important functions in this class and their syntax given below:
     %   (For details please type: help PFSA/function_name)
@@ -126,18 +126,26 @@ classdef PFSA
                     for i = 1:size(training_data,1)
                         bounds(i,:) = return_partitions_unit_var(PFSA,training_data(i,:),part_scheme,N);
                     end
-                else
+                elseif unit_var == 2
+                     for i = 1:size(training_data,1)
+                        bounds(i,:) = return_partitions(PFSA,training_data(i,:),part_scheme,N);
+                    end
+                else                   
                     for i = 1:size(training_data,1)
                         bounds(i,:) = return_partitions_unit_range(PFSA,training_data(i,:),part_scheme,N);
                     end
                 end
+%                 bounds = sign(mean(bounds)).*max(abs(bounds));
                 bounds = sign(mean(bounds)).*mean(abs(bounds));
+%                 bounds = mean(bounds);
             end
             
             for i = 1:size(training_data,1)
                 if global_part == 1
                     if unit_var == 1
                         y = symbolize_partitions_unit_var(PFSA,training_data(i,:),bounds);
+                    elseif unit_var ==2
+                        y = symbolize_partitions(PFSA,training_data(i,:),bounds);
                     else
                         y = symbolize_partitions_unit_range(PFSA,training_data(i,:),bounds);
                     end
@@ -235,17 +243,30 @@ classdef PFSA
             
             states = generate_states(PFSA,N,D);
             
+%             training_data_raw = training_data_raw(:);
+            
             if global_part == 1
                 if unit_var == 1
                     for i = 1:size(training_data_raw,1)
                         bounds(i,:) = return_partitions_unit_var(PFSA,training_data_raw(i,:),part_scheme,N);
+                    end
+                elseif unit_var == 2
+                    for i = 1:size(training_data_raw,1)
+                        bounds(i,:) = return_partitions(PFSA,training_data_raw(i,:),part_scheme,N);
                     end
                 else
                     for i = 1:size(training_data_raw,1)
                         bounds(i,:) = return_partitions_unit_range(PFSA,training_data_raw(i,:),part_scheme,N);
                     end
                 end
+                model.bounds_list = bounds;
+        
                 bounds = sign(mean(bounds)).*max(abs(bounds));
+%                 bounds = mean(bounds);
+
+                if unit_var == 2 || unit_var == 0
+                    bounds = [0:1/(length(bounds)-1):1]*(max(bounds) - min(bounds)) + min(bounds);
+                end
             end
             
             if global_part == 1
@@ -333,6 +354,8 @@ classdef PFSA
             if global_part == 1
                 if unit_var == 1
                     y = symbolize_partitions_unit_var(PFSA,training_data(1,:),bounds);
+                elseif unit_var ==2
+                    y = symbolize_partitions(PFSA,training_data(1,:),bounds);
                 else
                     y = symbolize_partitions_unit_range(PFSA,training_data(1,:),bounds);
                 end
@@ -448,9 +471,11 @@ classdef PFSA
             for i = 1:size(testing_data,1)
                 if global_part == 1
                     if unit_var == 1
-                        y = symbolize_partitions_unit_var(PFSA,testing_data(i,:),bounds);
+                        y = symbolize_partitions_unit_var(PFSA,training_data(i,:),bounds);
+                    elseif unit_var ==2
+                        y = symbolize_partitions(PFSA,training_data(i,:),bounds);
                     else
-                        y = symbolize_partitions_unit_range(PFSA,testing_data(i,:),bounds);
+                        y = symbolize_partitions_unit_range(PFSA,training_data(i,:),bounds);
                     end
                 else
                     if unit_var == 1
@@ -469,6 +494,8 @@ classdef PFSA
                     for j = 1:num_classes
                         dist_pi(j) = norm([norm(pi_train{j} - pi_temp,2),...
                             std_temp-std_train(j),mean_temp - mean_train(j)],2);
+%                         dist_pi(j) = norm([norm(pi_train{j} - pi_temp,2),...
+%                             (std_temp-std_train(j))/std_train(j),(mean_temp - mean_train(j))/mean_train(j)],2);
                     end
                 end
                 
@@ -484,13 +511,47 @@ classdef PFSA
                     for j = 1:num_classes
                         error(j) = norm([vecnorm((Left_temp(1,:)*Right_Ortho{j,1}),2,2),...
                             std_temp-std_train(j),mean_temp - mean_train(j)],2);
+%                         error(j) = norm([vecnorm((Left_temp(1,:)*Right_Ortho{j,1}),2,2),...
+%                             1-min(std_temp/std_train(j),std_train(j)/std_temp),...
+%                             1-min(mean_temp/mean_train(j),mean_train(j)/mean_temp)],2);
                     end
+
+%                     for j = 1:num_classes
+%                         error(j,1) = vecnorm((Left_temp(1,:)*Right_Ortho{j,1}),2,2);
+%                         error(j,2) = std_temp-std_train(j);
+%                         error(j,3) = mean_temp - mean_train(j);
+%                     end
+%                     
+%                     [~,p] = sort(abs(error),'ascend');
+%                     
+%                     r = [];
+%                     for k = 1:3
+%                         r(p(:,k),k) = [1:num_classes];
+%                     end
+%                     
+%                     error = sum(r')';
                 end
                 
                 switch analysis_type
                     case 's'
                         pred_class(i,1) = map(find(dist_pi == min(dist_pi)));
                     case 'p'
+%                         [M,F] = mode(r');
+%                         temp_pred = union(find(error == min(error)),find(M == min(M)));
+%                         if length(temp_pred) > 1
+%                             [M,F] = mode(r(temp_pred,:)');
+%                             temp_pred = temp_pred(find(M == min(M)));
+%                         end
+%                         if length(temp_pred) > 1
+%                             for j = 1:num_classes
+%                                 error(j) = norm([vecnorm((Left_temp(1,:)*Right_Ortho{j,1}),2,2),...
+%                                     std_temp-std_train(j),mean_temp - mean_train(j)],2);
+%                             end
+%                             temp_pred = find(error == min(error));
+%                         end                            
+%                             
+%                         pred_class(i,1) = map(temp_pred);
+  
                         pred_class(i,1) = map(find(error == min(error)));
                     case 'b'
                         conf_pi = sort((1./dist_pi)./sum(1./dist_pi),'descend');
@@ -660,6 +721,45 @@ classdef PFSA
                     bounds = sort(bounds);
             end
         end
+
+        function [bounds] = return_partitions(obj,x,t,n)
+            %   Code written by Chandrachur Bhattacharya @ Penn State
+            %   Date Last Modified:August 4, 2021
+            %   FORMAT: [bounds] = return_partitions(obj,x,t,n)
+            %   PURPOSE: This function returns the partition boundaries for a given raw
+            %            data time series without normalizing the data
+            %   INPUTS: x = Raw time-series,
+            %           t = Type of partitioning schemes (MEP: 'm', Uniform: 'u',
+            %               K-means: 'k'),
+            %           n = Alphabet size
+            %   OUTPUTS: bounds = partition boundary values
+            %   MATLAB functions called: min max sort size kmeans find
+            %   Non-MATLAB functions called: normalizeTS
+            
+            bounds = zeros(1,n);
+            
+            switch t
+                
+                case 'u'
+                    bounds = [0:1/n:1]*(max(x) - min(x)) + min(x);
+                    
+                case 'm'
+                    x1 = sort(x);
+                    K = max(size(x1));
+                    bounds(1) = min(x1);
+                    for i=1:n
+                        bounds(i+1) = x1(ceil(i*K/n));
+                    end
+                    
+                case 'k'
+                    y = kmeans(x',n,'MaxIter',10000);
+                    bounds(1) = min(x);
+                    for i=1:n
+                        bounds(i+1) = max(x(find(y == i)));
+                    end
+                    bounds = sort(bounds);
+            end
+        end        
         
         function [A] = State_Transition_Matrix(obj,y,n,D,states)
             %   Code written by Chandrachur Bhattacharya @ Penn State
@@ -768,6 +868,29 @@ classdef PFSA
             %   Non-MATLAB functions called: normalizeTS
             
             x = normalize_unit_var(obj,x);
+            y = zeros(length(x),1);
+            
+            for i = 1:length(bounds)-1
+                y(find(x>=bounds(i) & x<=bounds(i+1))) = i;
+            end
+            
+            y(find(x<=bounds(1))) = 1;
+            y(find(x>=bounds(end))) = length(bounds)-1;
+        end
+
+        function [y] = symbolize_partitions(obj,x,bounds)
+            %   Code written by Chandrachur Bhattacharya @ Penn State
+            %   Date Last Modified: November 25, 2019
+            %   FORMAT: [y] = symbolize_partitions_unit_var(obj,x,bounds)
+            %   PURPOSE: This function returns the symbol sequence obtained from
+            %            normalizing and partitioning the raw data time-series using
+            %            preset partition boundaries
+            %   INPUTS: x = Raw time-series,
+            %           bounds = Preset partition boundaries
+            %   OUTPUTS: y = Computed symbol sequence (of same length as 'x')
+            %   MATLAB functions called: length
+            %   Non-MATLAB functions called: normalizeTS
+
             y = zeros(length(x),1);
             
             for i = 1:length(bounds)-1
